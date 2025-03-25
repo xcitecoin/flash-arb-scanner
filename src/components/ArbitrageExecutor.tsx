@@ -41,12 +41,14 @@ const mainnetConfig = {
 interface ArbitrageExecutorProps {
   opportunity: ArbitrageOpportunity;
   gasPrice: number;
+  isSimulation?: boolean;
   onExecutionComplete?: (txHash: string, status: 'completed' | 'failed') => void;
 }
 
 const ArbitrageExecutor: React.FC<ArbitrageExecutorProps> = ({ 
   opportunity, 
   gasPrice,
+  isSimulation = true,
   onExecutionComplete 
 }) => {
   const { address, ethereum } = useWallet();
@@ -114,7 +116,6 @@ const ArbitrageExecutor: React.FC<ArbitrageExecutorProps> = ({
       const provider = new ethers.providers.Web3Provider(ethereum);
       
       // This would use real parameters in a production environment
-      // Here we're just simulating what would happen
       const params = {
         receiverContract: mainnetConfig.flashLoanReceiverAddress,
         token: opportunity.tokenAddresses.token0,
@@ -126,30 +127,65 @@ const ArbitrageExecutor: React.FC<ArbitrageExecutorProps> = ({
         }
       };
 
-      // Display info about this being a simulation
-      toast.info("Simulation mode active", {
-        description: "This is a demonstration. No real transaction will be sent.",
-      });
-      
-      // In a simulation, we just wait and then show a success message
-      setTimeout(() => {
-        toast.success("Simulation complete", {
-          description: "In production, this would execute a real flash loan transaction."
+      if (isSimulation) {
+        // Display info about this being a simulation
+        toast.info("Simulation mode active", {
+          description: "This is a demonstration. No real transaction will be sent.",
         });
         
-        if (onExecutionComplete) {
-          onExecutionComplete(
-            "0x" + Math.random().toString(16).substr(2, 40), // Fake transaction hash
-            'completed'
-          );
+        // In a simulation, we just wait and then show a success message
+        setTimeout(() => {
+          toast.success("Simulation complete", {
+            description: "In production, this would execute a real flash loan transaction."
+          });
+          
+          if (onExecutionComplete) {
+            onExecutionComplete(
+              "0x" + Math.random().toString(16).substr(2, 40), // Fake transaction hash
+              'completed'
+            );
+          }
+          
+          setIsExecuting(false);
+        }, 3000);
+      } else {
+        // Check if flash loan receiver is set
+        if (mainnetConfig.flashLoanReceiverAddress === "0x0000000000000000000000000000000000000000") {
+          toast.error("Flash loan receiver not configured", {
+            description: "Please deploy the flash loan receiver contract first"
+          });
+          setIsExecuting(false);
+          return;
+        }
+        
+        // In a real implementation
+        toast.info("Executing flash loan", {
+          description: "This will execute a real flash loan on the blockchain"
+        });
+        
+        try {
+          const txHash = await executeFlashLoan(provider, mainnetConfig.lendingPoolAddress, params);
+          
+          toast.success("Transaction submitted", {
+            description: "Your arbitrage transaction has been submitted to the blockchain",
+            action: {
+              label: "View",
+              onClick: () => window.open(`https://etherscan.io/tx/${txHash}`, '_blank')
+            }
+          });
+          
+          if (onExecutionComplete) onExecutionComplete(txHash, 'completed');
+        } catch (error: any) {
+          console.error("Error executing transaction:", error);
+          toast.error("Transaction failed", {
+            description: error.message || "Could not execute the transaction"
+          });
+          
+          if (onExecutionComplete) onExecutionComplete("0x0", 'failed');
         }
         
         setIsExecuting(false);
-      }, 3000);
-      
-      // In a real implementation:
-      // const txHash = await executeFlashLoan(provider, mainnetConfig.lendingPoolAddress, params);
-      // if (onExecutionComplete) onExecutionComplete(txHash, 'completed');
+      }
     } catch (error: any) {
       console.error("Error executing trade:", error);
       toast.error("Execution failed", {
@@ -214,7 +250,7 @@ const ArbitrageExecutor: React.FC<ArbitrageExecutorProps> = ({
         size="sm"
         className="h-8 px-3 text-xs bg-green-600 hover:bg-green-700"
         onClick={executeTrade}
-        disabled={isExecuting || (profitDetails && !profitDetails.isProtifable)}
+        disabled={isExecuting || (profitDetails && !profitDetails.isProtifable) || !address}
       >
         {isExecuting ? (
           <>

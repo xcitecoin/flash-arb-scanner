@@ -1,15 +1,17 @@
-
 import React, { useState, useEffect } from "react";
 import Header from "@/components/Header";
 import TradingStats from "@/components/TradingStats";
-import ArbitrageList from "@/components/ArbitrageList";
+import ArbitrageExecutor from "@/components/ArbitrageExecutor";
 import TokenPriceTable from "@/components/TokenPriceTable";
 import GasSettings from "@/components/GasSettings";
 import ScanningStatus from "@/components/ScanningStatus";
 import ChainSelector from "@/components/ChainSelector";
+import NodeProviderSetup from "@/components/NodeProviderSetup";
+import ContractDeploy from "@/components/ContractDeploy";
 import { toast } from "sonner";
 import { ArbitrageOpportunity } from "@/lib/types";
 import { generateMockOpportunities } from "@/lib/mockData";
+import { scanArbitrageOpportunities } from "@/lib/dexService";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -18,6 +20,7 @@ import { Label } from "@/components/ui/label";
 import { useWallet } from "@/context/WalletProvider";
 import { useGasPrice } from "@/hooks/useGasPrice";
 import { AlertCircle } from "lucide-react";
+import { NodeProvider, getProviderConfig } from "@/lib/providers";
 
 const Index = () => {
   const [opportunities, setOpportunities] = useState<ArbitrageOpportunity[]>([]);
@@ -28,10 +31,10 @@ const Index = () => {
   const [activeTab, setActiveTab] = useState("dashboard");
   const [autoExecute, setAutoExecute] = useState(false);
   const [isSimulation, setIsSimulation] = useState(true);
+  const [hasNodeProvider, setHasNodeProvider] = useState(false);
   const { address } = useWallet();
   const { gasPrice } = useGasPrice();
 
-  // Available chains
   const chains = [
     { id: "ethereum", name: "Ethereum" },
     { id: "arbitrum", name: "Arbitrum" },
@@ -41,79 +44,98 @@ const Index = () => {
     { id: "avalanche", name: "Avalanche" },
   ];
 
-  // Mock token price data
-  const tokenPrices = [
-    { dex: "Uniswap", price: 1820.45 },
-    { dex: "SushiSwap", price: 1825.12 },
-    { dex: "Curve", price: 1818.79 },
-    { dex: "Balancer", price: 1823.68 },
-    { dex: "PancakeSwap", price: 1826.32 },
-  ];
+  useEffect(() => {
+    const infuraConfig = getProviderConfig(NodeProvider.INFURA);
+    const alchemyConfig = getProviderConfig(NodeProvider.ALCHEMY);
+    
+    setHasNodeProvider(!!(infuraConfig?.apiKey || alchemyConfig?.apiKey));
+  }, []);
 
-  // Simulate scanning for arbitrage opportunities
   useEffect(() => {
     if (!isScanning) return;
 
-    // Display simulation notice on first load
     if (scanCount === 0) {
       toast.info(
-        "Simulation Mode Active",
+        hasNodeProvider ? "Connected to blockchain" : "Simulation Mode Active",
         {
-          description: "This app is currently using simulated data for demonstration purposes.",
+          description: hasNodeProvider 
+            ? "The app is now connected to real blockchain data"
+            : "This app is currently using simulated data. Add an Infura or Alchemy API key to use real blockchain data.",
           duration: 6000,
         }
       );
     }
 
-    const scanInterval = setInterval(() => {
-      // Update scanning stats
+    const scanInterval = setInterval(async () => {
       setLastScanned(new Date());
       setScanCount(prev => prev + 1);
       
-      // 30% chance of finding new opportunities
-      if (Math.random() < 0.3) {
-        const newOpportunities = generateMockOpportunities();
-        
-        // Add token addresses to each opportunity for later use
-        const enhancedOpportunities = newOpportunities.map(opp => ({
-          ...opp,
-          tokenAddresses: {
-            token0: opp.tokenPair.split('/')[0] === 'ETH' 
-              ? '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2' // WETH
-              : '0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599', // WBTC
-            token1: opp.tokenPair.split('/')[1] === 'USDC' 
-              ? '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48' // USDC
-              : '0x6B175474E89094C44Da98b954EedeAC495271d0F'  // DAI
-          }
-        }));
-        
-        setOpportunities(enhancedOpportunities);
-        
-        // Show toast for new opportunities
-        if (enhancedOpportunities.length > 0) {
-          toast.info(
-            `Found ${enhancedOpportunities.length} arbitrage opportunities`,
-            {
-              description: `Highest profit: $${enhancedOpportunities[0].potentialProfit.toFixed(2)}`,
-            }
+      if (hasNodeProvider) {
+        try {
+          const chainId = selectedChain === "ethereum" ? 1 : 
+                          selectedChain === "polygon" ? 137 : 1;
+          
+          const realOpportunities = await scanArbitrageOpportunities(
+            chainId,
+            getProviderConfig(NodeProvider.INFURA)?.apiKey ? 
+              NodeProvider.INFURA : NodeProvider.ALCHEMY
           );
           
-          // Auto-execute if enabled
-          if (autoExecute && enhancedOpportunities[0].potentialProfit > 100 && address) {
-            setTimeout(() => {
-              toast.success("Auto-executed profitable trade", {
-                description: `${enhancedOpportunities[0].tokenPair} with ${enhancedOpportunities[0].priceGap.toFixed(2)}% price gap`,
-              });
-            }, 1500);
+          if (realOpportunities.length > 0) {
+            setOpportunities(realOpportunities);
+            toast.info(
+              `Found ${realOpportunities.length} arbitrage opportunities`,
+              {
+                description: `Highest profit: $${realOpportunities[0].potentialProfit.toFixed(2)}`,
+              }
+            );
+          }
+        } catch (error) {
+          console.error("Error scanning for real opportunities:", error);
+          const newOpportunities = generateMockOpportunities().map(opp => ({
+            ...opp,
+            tokenAddresses: {
+              token0: opp.tokenPair.split('/')[0] === 'ETH' 
+                ? '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2' // WETH
+                : '0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599', // WBTC
+              token1: opp.tokenPair.split('/')[1] === 'USDC' 
+                ? '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48' // USDC
+                : '0x6B175474E89094C44Da98b954EedeAC495271d0F'  // DAI
+            }
+          }));
+          setOpportunities(newOpportunities);
+        }
+      } else {
+        if (Math.random() < 0.3) {
+          const newOpportunities = generateMockOpportunities().map(opp => ({
+            ...opp,
+            tokenAddresses: {
+              token0: opp.tokenPair.split('/')[0] === 'ETH' 
+                ? '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2' // WETH
+                : '0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599', // WBTC
+              token1: opp.tokenPair.split('/')[1] === 'USDC' 
+                ? '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48' // USDC
+                : '0x6B175474E89094C44Da98b954EedeAC495271d0F'  // DAI
+            }
+          }));
+          
+          setOpportunities(newOpportunities);
+          
+          if (newOpportunities.length > 0) {
+            toast.info(
+              `Found ${newOpportunities.length} arbitrage opportunities (simulated)`,
+              {
+                description: `Highest profit: $${newOpportunities[0].potentialProfit.toFixed(2)}`,
+              }
+            );
           }
         }
       }
     }, 5000);
 
     return () => clearInterval(scanInterval);
-  }, [isScanning, autoExecute, scanCount, address]);
+  }, [isScanning, autoExecute, scanCount, address, hasNodeProvider, selectedChain]);
 
-  // Initial scan
   useEffect(() => {
     const initialOpportunities = generateMockOpportunities().map(opp => ({
       ...opp,
@@ -136,15 +158,17 @@ const Index = () => {
       
       <main className="container max-w-7xl px-4 pt-24 pb-16">
         <div className="flex flex-col space-y-8">
-          {/* Simulation Notice */}
-          <div className="bg-amber-100 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-3 flex items-center space-x-3 animate-fade-in">
-            <AlertCircle className="h-5 w-5 text-amber-500" />
-            <p className="text-sm text-amber-800 dark:text-amber-200">
-              This application is currently in <strong>simulation mode</strong>. All arbitrage opportunities are mocked for demonstration purposes.
+          <div className={`${hasNodeProvider ? 'bg-green-100 dark:bg-green-900/20 border-green-200 dark:border-green-800' : 'bg-amber-100 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800'} border rounded-lg p-3 flex items-center space-x-3 animate-fade-in`}>
+            <AlertCircle className={`h-5 w-5 ${hasNodeProvider ? 'text-green-500' : 'text-amber-500'}`} />
+            <p className={`text-sm ${hasNodeProvider ? 'text-green-800 dark:text-green-200' : 'text-amber-800 dark:text-amber-200'}`}>
+              {hasNodeProvider 
+                ? <strong>Connected to blockchain data</strong>
+                : <strong>Simulation mode active</strong>} - {hasNodeProvider 
+                  ? "The application is now using real blockchain data from your configured node provider."
+                  : "All arbitrage opportunities are simulated for demonstration purposes."}
             </p>
           </div>
           
-          {/* Top Controls */}
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
             <div>
               <h1 className="text-3xl font-semibold tracking-tight animate-fade-in">
@@ -176,7 +200,6 @@ const Index = () => {
             </div>
           </div>
           
-          {/* Scanning Status */}
           <ScanningStatus 
             isScanning={isScanning}
             lastScanned={lastScanned}
@@ -184,19 +207,36 @@ const Index = () => {
             className="animate-fade-in [animation-delay:400ms]"
           />
           
-          {/* Trading Stats */}
           <TradingStats />
           
-          {/* Main Content Tabs */}
           <Tabs defaultValue="dashboard" value={activeTab} onValueChange={setActiveTab} className="w-full animate-fade-in [animation-delay:500ms]">
-            <TabsList className="grid w-full max-w-md grid-cols-3">
+            <TabsList className="grid w-full max-w-md grid-cols-4">
               <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
               <TabsTrigger value="settings">Settings</TabsTrigger>
               <TabsTrigger value="prices">Prices</TabsTrigger>
+              <TabsTrigger value="deploy">Deploy</TabsTrigger>
             </TabsList>
             
             <TabsContent value="dashboard" className="space-y-6 pt-4">
-              {/* Opportunities List with ArbitrageExecutor */}
+              {!hasNodeProvider && (
+                <Card className="bg-amber-50 dark:bg-amber-900/10 border-amber-200 dark:border-amber-800">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-lg text-amber-800 dark:text-amber-200 flex items-center gap-2">
+                      <AlertCircle className="h-5 w-5" />
+                      Connect to Real Data
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-sm text-amber-700 dark:text-amber-300 mb-4">
+                      Currently using simulated data. Connect to Infura or Alchemy to access real blockchain data and execute actual arbitrage trades.
+                    </p>
+                    <Button onClick={() => setActiveTab("settings")}>
+                      Configure Node Provider
+                    </Button>
+                  </CardContent>
+                </Card>
+              )}
+              
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
                   <h2 className="text-xl font-semibold">Arbitrage Opportunities</h2>
@@ -206,18 +246,46 @@ const Index = () => {
                     className="text-xs"
                     onClick={() => {
                       toast.info("Refreshing opportunities...");
-                      const newOpps = generateMockOpportunities().map(opp => ({
-                        ...opp,
-                        tokenAddresses: {
-                          token0: opp.tokenPair.split('/')[0] === 'ETH' 
-                            ? '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2' // WETH
-                            : '0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599', // WBTC
-                          token1: opp.tokenPair.split('/')[1] === 'USDC' 
-                            ? '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48' // USDC
-                            : '0x6B175474E89094C44Da98b954EedeAC495271d0F'  // DAI
-                        }
-                      }));
-                      setOpportunities(newOpps);
+                      
+                      if (hasNodeProvider) {
+                        const chainId = selectedChain === "ethereum" ? 1 : 
+                                      selectedChain === "polygon" ? 137 : 1;
+                                      
+                        scanArbitrageOpportunities(
+                          chainId,
+                          getProviderConfig(NodeProvider.INFURA)?.apiKey ? 
+                            NodeProvider.INFURA : NodeProvider.ALCHEMY
+                        ).then(opportunities => {
+                          setOpportunities(opportunities);
+                        }).catch(error => {
+                          console.error("Error scanning for opportunities:", error);
+                          const newOpps = generateMockOpportunities().map(opp => ({
+                            ...opp,
+                            tokenAddresses: {
+                              token0: opp.tokenPair.split('/')[0] === 'ETH' 
+                                ? '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2' // WETH
+                                : '0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599', // WBTC
+                              token1: opp.tokenPair.split('/')[1] === 'USDC' 
+                                ? '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48' // USDC
+                                : '0x6B175474E89094C44Da98b954EedeAC495271d0F'  // DAI
+                            }
+                          }));
+                          setOpportunities(newOpps);
+                        });
+                      } else {
+                        const newOpps = generateMockOpportunities().map(opp => ({
+                          ...opp,
+                          tokenAddresses: {
+                            token0: opp.tokenPair.split('/')[0] === 'ETH' 
+                              ? '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2' // WETH
+                              : '0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599', // WBTC
+                            token1: opp.tokenPair.split('/')[1] === 'USDC' 
+                              ? '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48' // USDC
+                              : '0x6B175474E89094C44Da98b954EedeAC495271d0F'  // DAI
+                          }
+                        }));
+                        setOpportunities(newOpps);
+                      }
                     }}
                   >
                     Refresh
@@ -271,7 +339,8 @@ const Index = () => {
                                 <div className="ml-auto">
                                   <ArbitrageExecutor 
                                     opportunity={opp} 
-                                    gasPrice={gasPrice || 30} 
+                                    gasPrice={gasPrice || 30}
+                                    isSimulation={!hasNodeProvider}
                                   />
                                 </div>
                               )}
@@ -314,6 +383,10 @@ const Index = () => {
             
             <TabsContent value="settings" className="pt-4">
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <NodeProviderSetup 
+                  onComplete={() => setHasNodeProvider(true)}
+                />
+                
                 <Card>
                   <CardHeader>
                     <CardTitle className="text-lg">Execution Settings</CardTitle>
@@ -361,8 +434,18 @@ const Index = () => {
             <TabsContent value="prices" className="pt-4">
               <TokenPriceTable 
                 tokenPair="ETH/USDC" 
-                prices={tokenPrices} 
+                prices={[
+                  { dex: "Uniswap", price: 1820.45 },
+                  { dex: "SushiSwap", price: 1825.12 },
+                  { dex: "Curve", price: 1818.79 },
+                  { dex: "Balancer", price: 1823.68 },
+                  { dex: "PancakeSwap", price: 1826.32 },
+                ]} 
               />
+            </TabsContent>
+            
+            <TabsContent value="deploy" className="pt-4">
+              <ContractDeploy />
             </TabsContent>
           </Tabs>
         </div>
