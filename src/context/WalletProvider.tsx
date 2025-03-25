@@ -33,35 +33,63 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [isConnecting, setIsConnecting] = useState(false);
   const [ethereum, setEthereum] = useState<any>(null);
 
-  // Initialize ethereum object
+  // Initialize ethereum object with better mobile detection
   useEffect(() => {
-    const ethereum = (window as any).ethereum;
-    if (ethereum) {
-      setEthereum(ethereum);
+    const detectEthereum = () => {
+      // Check for ethereum in window
+      const ethereum = (window as any).ethereum;
       
-      // Check if already connected
-      const checkConnection = async () => {
-        try {
-          const provider = new ethers.providers.Web3Provider(ethereum);
-          const accounts = await provider.listAccounts();
+      if (ethereum) {
+        console.log("MetaMask detected in window.ethereum");
+        setEthereum(ethereum);
+        return true;
+      }
+      
+      // Check for ethereum in ethereum-compatible browsers
+      if ((window as any).web3?.currentProvider) {
+        console.log("MetaMask detected in window.web3.currentProvider");
+        setEthereum((window as any).web3.currentProvider);
+        return true;
+      }
+      
+      // Check if on mobile
+      const userAgent = navigator.userAgent.toLowerCase();
+      const isMobile = /iphone|ipad|ipod|android/.test(userAgent);
+      
+      if (isMobile) {
+        // Deep link to MetaMask if on mobile
+        console.log("Mobile device detected, will try deep linking to MetaMask");
+      }
+      
+      return false;
+    };
+    
+    const checkConnection = async () => {
+      if (!ethereum) return;
+      
+      try {
+        const provider = new ethers.providers.Web3Provider(ethereum);
+        const accounts = await provider.listAccounts();
+        
+        if (accounts.length > 0) {
+          const network = await provider.getNetwork();
+          const userBalance = await provider.getBalance(accounts[0]);
           
-          if (accounts.length > 0) {
-            const network = await provider.getNetwork();
-            const userBalance = await provider.getBalance(accounts[0]);
-            
-            setAddress(accounts[0]);
-            setChainId(network.chainId);
-            setBalance(ethers.utils.formatEther(userBalance));
-            
-            toast.success("Wallet connected", {
-              description: shortenAddress(accounts[0]),
-            });
-          }
-        } catch (error) {
-          console.error("Error checking wallet connection:", error);
+          setAddress(accounts[0]);
+          setChainId(network.chainId);
+          setBalance(ethers.utils.formatEther(userBalance));
+          
+          toast.success("Wallet connected", {
+            description: shortenAddress(accounts[0]),
+          });
         }
-      };
-      
+      } catch (error) {
+        console.error("Error checking wallet connection:", error);
+      }
+    };
+    
+    // Detect ethereum and check connection
+    if (detectEthereum()) {
       checkConnection();
     }
   }, []);
@@ -117,6 +145,29 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const connectWallet = async () => {
     if (!ethereum) {
+      // Handle mobile deep linking to MetaMask
+      const userAgent = navigator.userAgent.toLowerCase();
+      const isMobile = /iphone|ipad|ipod|android/.test(userAgent);
+      
+      if (isMobile) {
+        // Create deep link to MetaMask
+        const dappUrl = window.location.href;
+        const metamaskAppDeepLink = `https://metamask.app.link/dapp/${window.location.host}${window.location.pathname}`;
+        
+        toast.info("Redirecting to MetaMask", {
+          description: "Opening MetaMask mobile app...",
+          action: {
+            label: "Cancel",
+            onClick: () => console.log("Cancelled MetaMask redirect"),
+          },
+        });
+        
+        // Redirect to MetaMask
+        window.location.href = metamaskAppDeepLink;
+        return;
+      }
+      
+      // Desktop browser without MetaMask
       toast.error("MetaMask not installed", {
         description: "Please install MetaMask to connect your wallet",
         action: {

@@ -97,7 +97,9 @@ const ArbitrageExecutor: React.FC<ArbitrageExecutorProps> = ({
 
   const executeTrade = async () => {
     if (!address) {
-      toast.error("Wallet not connected");
+      toast.error("Wallet not connected", {
+        description: "Please connect your wallet first to execute trades",
+      });
       return;
     }
 
@@ -124,11 +126,15 @@ const ArbitrageExecutor: React.FC<ArbitrageExecutorProps> = ({
         }
       };
 
-      // In a real implementation, you would execute the flash loan
-      // For demo purposes, we'll simulate success after a delay
+      // Display info about this being a simulation
+      toast.info("Simulation mode active", {
+        description: "This is a demonstration. No real transaction will be sent.",
+      });
+      
+      // In a simulation, we just wait and then show a success message
       setTimeout(() => {
-        toast.success("Flash loan executed successfully", {
-          description: "Arbitrage trade completed"
+        toast.success("Simulation complete", {
+          description: "In production, this would execute a real flash loan transaction."
         });
         
         if (onExecutionComplete) {
@@ -156,8 +162,8 @@ const ArbitrageExecutor: React.FC<ArbitrageExecutorProps> = ({
           'failed'
         );
       }
-    } finally {
-      // setIsExecuting(false);
+      
+      setIsExecuting(false);
     }
   };
 
@@ -208,7 +214,7 @@ const ArbitrageExecutor: React.FC<ArbitrageExecutorProps> = ({
         size="sm"
         className="h-8 px-3 text-xs bg-green-600 hover:bg-green-700"
         onClick={executeTrade}
-        disabled={isExecuting || !address || (profitDetails && !profitDetails.isProtifable)}
+        disabled={isExecuting || (profitDetails && !profitDetails.isProtifable)}
       >
         {isExecuting ? (
           <>
