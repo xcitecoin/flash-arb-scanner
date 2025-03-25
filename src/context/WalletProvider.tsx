@@ -145,25 +145,21 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const connectWallet = async () => {
     if (!ethereum) {
-      // Handle mobile deep linking to MetaMask
+      // Better mobile detection and deep linking
       const userAgent = navigator.userAgent.toLowerCase();
       const isMobile = /iphone|ipad|ipod|android/.test(userAgent);
       
       if (isMobile) {
-        // Create deep link to MetaMask
-        const dappUrl = window.location.href;
-        const metamaskAppDeepLink = `https://metamask.app.link/dapp/${window.location.host}${window.location.pathname}`;
+        // Create deep link to MetaMask with the current URL as callback
+        const currentUrl = encodeURIComponent(window.location.href);
+        const metamaskAppDeepLink = `https://metamask.app.link/dapp/${window.location.host}${window.location.pathname}?redirect=${currentUrl}`;
         
-        toast.info("Redirecting to MetaMask", {
-          description: "Opening MetaMask mobile app...",
-          action: {
-            label: "Cancel",
-            onClick: () => console.log("Cancelled MetaMask redirect"),
-          },
+        toast.info("Opening MetaMask", {
+          description: "Redirecting to MetaMask mobile app...",
         });
         
-        // Redirect to MetaMask
-        window.location.href = metamaskAppDeepLink;
+        // Open in new window to ensure proper redirection on mobile
+        window.open(metamaskAppDeepLink, '_blank');
         return;
       }
       
@@ -183,16 +179,23 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     try {
       const provider = new ethers.providers.Web3Provider(ethereum);
       const accounts = await ethereum.request({ method: "eth_requestAccounts" });
-      const network = await provider.getNetwork();
-      const userBalance = await provider.getBalance(accounts[0]);
+      
+      if (accounts.length > 0) {
+        const network = await provider.getNetwork();
+        const userBalance = await provider.getBalance(accounts[0]);
 
-      setAddress(accounts[0]);
-      setChainId(network.chainId);
-      setBalance(ethers.utils.formatEther(userBalance));
+        setAddress(accounts[0]);
+        setChainId(network.chainId);
+        setBalance(ethers.utils.formatEther(userBalance));
 
-      toast.success("Wallet connected", {
-        description: shortenAddress(accounts[0]),
-      });
+        toast.success("Wallet connected", {
+          description: shortenAddress(accounts[0]),
+        });
+      } else {
+        toast.error("No accounts found", {
+          description: "Please create an account in MetaMask",
+        });
+      }
     } catch (error: any) {
       if (error.code === 4001) {
         toast.error("Connection rejected", {

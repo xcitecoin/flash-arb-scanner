@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from "react";
 import Header from "@/components/Header";
 import TradingStats from "@/components/TradingStats";
@@ -23,6 +24,7 @@ import { AlertCircle } from "lucide-react";
 import { NodeProvider, getProviderConfig } from "@/lib/providers";
 
 const Index = () => {
+  // State variables
   const [opportunities, setOpportunities] = useState<ArbitrageOpportunity[]>([]);
   const [isScanning, setIsScanning] = useState(true);
   const [scanCount, setScanCount] = useState(0);
@@ -32,9 +34,15 @@ const Index = () => {
   const [autoExecute, setAutoExecute] = useState(false);
   const [isSimulation, setIsSimulation] = useState(true);
   const [hasNodeProvider, setHasNodeProvider] = useState(false);
+  const [minProfitThreshold, setMinProfitThreshold] = useState(100); // $100 default
+  const [maxSlippage, setMaxSlippage] = useState(1); // 1% default
+  const [flashLoanDeployed, setFlashLoanDeployed] = useState(false);
+  
+  // Hooks
   const { address } = useWallet();
   const { gasPrice } = useGasPrice();
 
+  // Available chains
   const chains = [
     { id: "ethereum", name: "Ethereum" },
     { id: "arbitrum", name: "Arbitrum" },
@@ -44,13 +52,21 @@ const Index = () => {
     { id: "avalanche", name: "Avalanche" },
   ];
 
+  // Check if node provider is configured
   useEffect(() => {
     const infuraConfig = getProviderConfig(NodeProvider.INFURA);
     const alchemyConfig = getProviderConfig(NodeProvider.ALCHEMY);
     
     setHasNodeProvider(!!(infuraConfig?.apiKey || alchemyConfig?.apiKey));
+    
+    // Check localStorage for flash loan deployment status
+    const deployedAddress = localStorage.getItem('flashLoanContractAddress');
+    if (deployedAddress && deployedAddress !== "0x0000000000000000000000000000000000000000") {
+      setFlashLoanDeployed(true);
+    }
   }, []);
 
+  // Scanning for arbitrage opportunities
   useEffect(() => {
     if (!isScanning) return;
 
@@ -83,12 +99,16 @@ const Index = () => {
           
           if (realOpportunities.length > 0) {
             setOpportunities(realOpportunities);
-            toast.info(
-              `Found ${realOpportunities.length} arbitrage opportunities`,
-              {
-                description: `Highest profit: $${realOpportunities[0].potentialProfit.toFixed(2)}`,
-              }
-            );
+            
+            // Only show toast if not auto-executing
+            if (!autoExecute) {
+              toast.info(
+                `Found ${realOpportunities.length} arbitrage opportunities`,
+                {
+                  description: `Highest profit: $${realOpportunities[0].potentialProfit.toFixed(2)}`,
+                }
+              );
+            }
           }
         } catch (error) {
           console.error("Error scanning for real opportunities:", error);
@@ -106,7 +126,7 @@ const Index = () => {
           setOpportunities(newOpportunities);
         }
       } else {
-        if (Math.random() < 0.3) {
+        if (Math.random() < 0.3 || opportunities.length === 0) {
           const newOpportunities = generateMockOpportunities().map(opp => ({
             ...opp,
             tokenAddresses: {
@@ -121,7 +141,8 @@ const Index = () => {
           
           setOpportunities(newOpportunities);
           
-          if (newOpportunities.length > 0) {
+          // Only show toast if not auto-executing
+          if (!autoExecute && newOpportunities.length > 0) {
             toast.info(
               `Found ${newOpportunities.length} arbitrage opportunities (simulated)`,
               {
@@ -136,6 +157,7 @@ const Index = () => {
     return () => clearInterval(scanInterval);
   }, [isScanning, autoExecute, scanCount, address, hasNodeProvider, selectedChain]);
 
+  // Initial opportunities on mount
   useEffect(() => {
     const initialOpportunities = generateMockOpportunities().map(opp => ({
       ...opp,
@@ -152,12 +174,28 @@ const Index = () => {
     setLastScanned(new Date());
   }, []);
 
+  const handleDeploymentComplete = (address: string) => {
+    setFlashLoanDeployed(true);
+    localStorage.setItem('flashLoanContractAddress', address);
+  };
+
+  const handleProfitThresholdChange = (value: number) => {
+    setMinProfitThreshold(value);
+    toast.info(`Profit threshold set to $${value}`);
+  };
+
+  const handleSlippageChange = (value: number) => {
+    setMaxSlippage(value);
+    toast.info(`Max slippage set to ${value}%`);
+  };
+
   return (
     <div className="min-h-screen bg-background">
       <Header />
       
       <main className="container max-w-7xl px-4 pt-24 pb-16">
         <div className="flex flex-col space-y-8">
+          {/* Status Banner */}
           <div className={`${hasNodeProvider ? 'bg-green-100 dark:bg-green-900/20 border-green-200 dark:border-green-800' : 'bg-amber-100 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800'} border rounded-lg p-3 flex items-center space-x-3 animate-fade-in`}>
             <AlertCircle className={`h-5 w-5 ${hasNodeProvider ? 'text-green-500' : 'text-amber-500'}`} />
             <p className={`text-sm ${hasNodeProvider ? 'text-green-800 dark:text-green-200' : 'text-amber-800 dark:text-amber-200'}`}>
@@ -169,6 +207,24 @@ const Index = () => {
             </p>
           </div>
           
+          {/* Flash Loan Status Banner */}
+          {flashLoanDeployed ? (
+            <div className="bg-green-100 dark:bg-green-900/20 border-green-200 dark:border-green-800 border rounded-lg p-3 flex items-center space-x-3 animate-fade-in">
+              <AlertCircle className="h-5 w-5 text-green-500" />
+              <p className="text-sm text-green-800 dark:text-green-200">
+                <strong>Flash Loan Contract Deployed</strong> - Your arbitrage contract is ready for execution. You can now execute real arbitrage trades.
+              </p>
+            </div>
+          ) : (
+            <div className="bg-amber-100 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800 border rounded-lg p-3 flex items-center space-x-3 animate-fade-in">
+              <AlertCircle className="h-5 w-5 text-amber-500" />
+              <p className="text-sm text-amber-800 dark:text-amber-200">
+                <strong>Flash Loan Contract Not Deployed</strong> - Go to the "Deploy" tab to deploy your flash loan contract for executing real arbitrage trades.
+              </p>
+            </div>
+          )}
+          
+          {/* Page Header */}
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
             <div>
               <h1 className="text-3xl font-semibold tracking-tight animate-fade-in">
@@ -200,6 +256,7 @@ const Index = () => {
             </div>
           </div>
           
+          {/* Scanning Status */}
           <ScanningStatus 
             isScanning={isScanning}
             lastScanned={lastScanned}
@@ -207,8 +264,10 @@ const Index = () => {
             className="animate-fade-in [animation-delay:400ms]"
           />
           
+          {/* Trading Stats */}
           <TradingStats />
           
+          {/* Main Tabs */}
           <Tabs defaultValue="dashboard" value={activeTab} onValueChange={setActiveTab} className="w-full animate-fade-in [animation-delay:500ms]">
             <TabsList className="grid w-full max-w-md grid-cols-4">
               <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
@@ -217,6 +276,7 @@ const Index = () => {
               <TabsTrigger value="deploy">Deploy</TabsTrigger>
             </TabsList>
             
+            {/* Dashboard Tab */}
             <TabsContent value="dashboard" className="space-y-6 pt-4">
               {!hasNodeProvider && (
                 <Card className="bg-amber-50 dark:bg-amber-900/10 border-amber-200 dark:border-amber-800">
@@ -340,7 +400,9 @@ const Index = () => {
                                   <ArbitrageExecutor 
                                     opportunity={opp} 
                                     gasPrice={gasPrice || 30}
-                                    isSimulation={!hasNodeProvider}
+                                    isSimulation={!hasNodeProvider || !flashLoanDeployed}
+                                    autoExecute={autoExecute}
+                                    minProfitThreshold={minProfitThreshold}
                                   />
                                 </div>
                               )}
@@ -381,6 +443,7 @@ const Index = () => {
               </div>
             </TabsContent>
             
+            {/* Settings Tab */}
             <TabsContent value="settings" className="pt-4">
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <NodeProviderSetup 
@@ -402,26 +465,77 @@ const Index = () => {
                       <Switch
                         id="auto-execute"
                         checked={autoExecute}
-                        onCheckedChange={setAutoExecute}
+                        onCheckedChange={(checked) => {
+                          setAutoExecute(checked);
+                          toast.info(checked ? "Auto-execute enabled" : "Auto-execute disabled");
+                          
+                          if (checked && !flashLoanDeployed) {
+                            toast.warning("Auto-execute will run in simulation mode", {
+                              description: "Deploy flash loan contract to execute real trades"
+                            });
+                          }
+                        }}
                       />
                     </div>
                     
                     <div className="space-y-2">
                       <Label>Minimum Profit Threshold</Label>
                       <div className="grid grid-cols-3 gap-2">
-                        <Button variant="outline" size="sm">$50</Button>
-                        <Button variant="outline" size="sm" className="bg-primary/5">$100</Button>
-                        <Button variant="outline" size="sm">$200</Button>
+                        <Button 
+                          variant={minProfitThreshold === 50 ? "default" : "outline"} 
+                          size="sm"
+                          onClick={() => handleProfitThresholdChange(50)}
+                        >
+                          $50
+                        </Button>
+                        <Button 
+                          variant={minProfitThreshold === 100 ? "default" : "outline"} 
+                          size="sm"
+                          onClick={() => handleProfitThresholdChange(100)}
+                        >
+                          $100
+                        </Button>
+                        <Button 
+                          variant={minProfitThreshold === 200 ? "default" : "outline"} 
+                          size="sm"
+                          onClick={() => handleProfitThresholdChange(200)}
+                        >
+                          $200
+                        </Button>
                       </div>
                     </div>
                     
                     <div className="space-y-2">
                       <Label>Maximum Slippage</Label>
                       <div className="grid grid-cols-4 gap-2">
-                        <Button variant="outline" size="sm">0.5%</Button>
-                        <Button variant="outline" size="sm" className="bg-primary/5">1%</Button>
-                        <Button variant="outline" size="sm">2%</Button>
-                        <Button variant="outline" size="sm">5%</Button>
+                        <Button 
+                          variant={maxSlippage === 0.5 ? "default" : "outline"} 
+                          size="sm"
+                          onClick={() => handleSlippageChange(0.5)}
+                        >
+                          0.5%
+                        </Button>
+                        <Button 
+                          variant={maxSlippage === 1 ? "default" : "outline"} 
+                          size="sm"
+                          onClick={() => handleSlippageChange(1)}
+                        >
+                          1%
+                        </Button>
+                        <Button 
+                          variant={maxSlippage === 2 ? "default" : "outline"} 
+                          size="sm"
+                          onClick={() => handleSlippageChange(2)}
+                        >
+                          2%
+                        </Button>
+                        <Button 
+                          variant={maxSlippage === 5 ? "default" : "outline"} 
+                          size="sm"
+                          onClick={() => handleSlippageChange(5)}
+                        >
+                          5%
+                        </Button>
                       </div>
                     </div>
                   </CardContent>
@@ -431,6 +545,7 @@ const Index = () => {
               </div>
             </TabsContent>
             
+            {/* Prices Tab */}
             <TabsContent value="prices" className="pt-4">
               <TokenPriceTable 
                 tokenPair="ETH/USDC" 
@@ -444,8 +559,9 @@ const Index = () => {
               />
             </TabsContent>
             
+            {/* Deploy Tab */}
             <TabsContent value="deploy" className="pt-4">
-              <ContractDeploy />
+              <ContractDeploy onDeploymentComplete={handleDeploymentComplete} />
             </TabsContent>
           </Tabs>
         </div>

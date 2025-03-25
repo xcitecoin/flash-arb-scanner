@@ -81,7 +81,7 @@ export const createProvider = (
 ): ethers.providers.JsonRpcProvider | ethers.providers.Web3Provider | null => {
   try {
     // First check if MetaMask is available
-    if (window.ethereum && window.ethereum.isMetaMask) {
+    if (typeof window !== 'undefined' && window.ethereum && window.ethereum.isMetaMask) {
       return new ethers.providers.Web3Provider(window.ethereum);
     }
     

@@ -1,5 +1,5 @@
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { useWallet } from "@/context/WalletProvider";
 import { ArbitrageOpportunity } from "@/lib/types";
@@ -20,20 +20,38 @@ import {
 } from "@/components/ui/tooltip";
 import { AlertCircle, CheckCircle, Play, Loader2 } from "lucide-react";
 
-// Sample network configuration for Ethereum Mainnet
-const mainnetConfig = {
-  chainId: 1,
-  name: "Ethereum",
-  lendingPoolAddress: "0x7d2768dE32b0b80b7a3454c06BdAc94A69DDc7A9", // Aave V2 LendingPool
-  flashLoanReceiverAddress: "0x0000000000000000000000000000000000000000", // This would be your deployed contract
-  supportedDexes: {
-    "Uniswap": {
-      routerAddress: "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
-      factoryAddress: "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
-    },
-    "SushiSwap": {
-      routerAddress: "0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F",
-      factoryAddress: "0xC0AEe478e3658e2610c5F7A4A2E1777cE9e4f2Ac"
+// Network configurations
+const networkConfigs = {
+  1: {
+    chainId: 1,
+    name: "Ethereum",
+    lendingPoolAddress: "0x7d2768dE32b0b80b7a3454c06BdAc94A69DDc7A9", // Aave V2 LendingPool
+    flashLoanReceiverAddress: "0x0000000000000000000000000000000000000000", // This would be your deployed contract
+    supportedDexes: {
+      "Uniswap": {
+        routerAddress: "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
+        factoryAddress: "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
+      },
+      "SushiSwap": {
+        routerAddress: "0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F",
+        factoryAddress: "0xC0AEe478e3658e2610c5F7A4A2E1777cE9e4f2Ac"
+      }
+    }
+  },
+  137: {
+    chainId: 137,
+    name: "Polygon",
+    lendingPoolAddress: "0x8dFf5E27EA6b7AC08EbFdf9eB090F32ee9a30fcf", // Aave V2 on Polygon
+    flashLoanReceiverAddress: "0x0000000000000000000000000000000000000000",
+    supportedDexes: {
+      "QuickSwap": {
+        routerAddress: "0xa5E0829CaCEd8fFDD4De3c43696c57F7D7A678ff",
+        factoryAddress: "0x5757371414417b8C6CAad45bAeF941aBc7d3Ab32"
+      },
+      "SushiSwap": {
+        routerAddress: "0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506",
+        factoryAddress: "0xc35DADB65012eC5796536bD9864eD8773aBc74C4"
+      }
     }
   }
 };
@@ -42,6 +60,8 @@ interface ArbitrageExecutorProps {
   opportunity: ArbitrageOpportunity;
   gasPrice: number;
   isSimulation?: boolean;
+  autoExecute?: boolean;
+  minProfitThreshold?: number;
   onExecutionComplete?: (txHash: string, status: 'completed' | 'failed') => void;
 }
 
@@ -49,6 +69,8 @@ const ArbitrageExecutor: React.FC<ArbitrageExecutorProps> = ({
   opportunity, 
   gasPrice,
   isSimulation = true,
+  autoExecute = false,
+  minProfitThreshold = 100, // Default $100 minimum profit
   onExecutionComplete 
 }) => {
   const { address, ethereum } = useWallet();
@@ -60,6 +82,28 @@ const ArbitrageExecutor: React.FC<ArbitrageExecutorProps> = ({
     gasCost: number;
     flashLoanFee: number;
   } | null>(null);
+  const [hasChecked, setHasChecked] = useState(false);
+
+  // Auto-check profitability when component mounts or opportunity changes
+  useEffect(() => {
+    if (autoExecute && !hasChecked && address && !isCalculating && !isExecuting) {
+      calculateProfitability();
+    }
+  }, [opportunity, autoExecute, address, hasChecked, isCalculating, isExecuting]);
+
+  // Auto-execute if profitable and above threshold
+  useEffect(() => {
+    if (
+      autoExecute && 
+      profitDetails && 
+      profitDetails.isProtifable && 
+      profitDetails.netProfit >= minProfitThreshold && 
+      !isExecuting && 
+      address
+    ) {
+      executeTrade();
+    }
+  }, [profitDetails, autoExecute, isExecuting, address]);
 
   const calculateProfitability = async () => {
     if (!address) {
@@ -68,6 +112,7 @@ const ArbitrageExecutor: React.FC<ArbitrageExecutorProps> = ({
     }
 
     setIsCalculating(true);
+    setHasChecked(true);
 
     try {
       // Get current ETH price
@@ -81,13 +126,27 @@ const ArbitrageExecutor: React.FC<ArbitrageExecutorProps> = ({
       setProfitDetails(details);
       
       if (!details.isProtifable) {
-        toast.error("Not profitable", {
-          description: `Estimated loss: ${formatCurrency(details.netProfit)}`
-        });
+        if (autoExecute) {
+          console.log("Auto-execute: Opportunity not profitable", details);
+        } else {
+          toast.error("Not profitable", {
+            description: `Estimated loss: ${formatCurrency(details.netProfit)}`
+          });
+        }
       } else {
-        toast.success("Profitable opportunity", {
-          description: `Estimated profit: ${formatCurrency(details.netProfit)}`
-        });
+        if (autoExecute) {
+          if (details.netProfit < minProfitThreshold) {
+            console.log(`Auto-execute: Profit below threshold (${formatCurrency(details.netProfit)} < ${formatCurrency(minProfitThreshold)})`);
+          } else {
+            toast.success("Profitable opportunity found", {
+              description: `Auto-executing: ${formatCurrency(details.netProfit)} profit`
+            });
+          }
+        } else {
+          toast.success("Profitable opportunity", {
+            description: `Estimated profit: ${formatCurrency(details.netProfit)}`
+          });
+        }
       }
     } catch (error) {
       console.error("Error calculating profitability:", error);
@@ -95,6 +154,10 @@ const ArbitrageExecutor: React.FC<ArbitrageExecutorProps> = ({
     } finally {
       setIsCalculating(false);
     }
+  };
+
+  const getNetworkConfig = (chainId: number = 1) => {
+    return networkConfigs[chainId as keyof typeof networkConfigs] || networkConfigs[1];
   };
 
   const executeTrade = async () => {
@@ -114,10 +177,23 @@ const ArbitrageExecutor: React.FC<ArbitrageExecutorProps> = ({
 
     try {
       const provider = new ethers.providers.Web3Provider(ethereum);
+      const networkConfig = getNetworkConfig((await provider.getNetwork()).chainId);
+      
+      // Check if flash loan receiver is deployed
+      if (networkConfig.flashLoanReceiverAddress === "0x0000000000000000000000000000000000000000") {
+        toast.warning("Flash loan receiver not deployed", {
+          description: "Please deploy the flash loan receiver contract first",
+        });
+        
+        // For demo purpose, we'll continue in simulation mode
+        if (!isSimulation) {
+          toast.info("Switching to simulation mode");
+        }
+      }
       
       // This would use real parameters in a production environment
       const params = {
-        receiverContract: mainnetConfig.flashLoanReceiverAddress,
+        receiverContract: networkConfig.flashLoanReceiverAddress,
         token: opportunity.tokenAddresses.token0,
         amount: ethers.utils.parseEther("1.0"), // Amount to borrow
         route: {
@@ -127,10 +203,12 @@ const ArbitrageExecutor: React.FC<ArbitrageExecutorProps> = ({
         }
       };
 
-      if (isSimulation) {
+      if (isSimulation || networkConfig.flashLoanReceiverAddress === "0x0000000000000000000000000000000000000000") {
         // Display info about this being a simulation
         toast.info("Simulation mode active", {
-          description: "This is a demonstration. No real transaction will be sent.",
+          description: autoExecute 
+            ? "Auto-executing (simulation): No real transaction will be sent."
+            : "This is a demonstration. No real transaction will be sent.",
         });
         
         // In a simulation, we just wait and then show a success message
@@ -149,22 +227,15 @@ const ArbitrageExecutor: React.FC<ArbitrageExecutorProps> = ({
           setIsExecuting(false);
         }, 3000);
       } else {
-        // Check if flash loan receiver is set
-        if (mainnetConfig.flashLoanReceiverAddress === "0x0000000000000000000000000000000000000000") {
-          toast.error("Flash loan receiver not configured", {
-            description: "Please deploy the flash loan receiver contract first"
-          });
-          setIsExecuting(false);
-          return;
-        }
-        
         // In a real implementation
         toast.info("Executing flash loan", {
-          description: "This will execute a real flash loan on the blockchain"
+          description: autoExecute 
+            ? "Auto-executing arbitrage opportunity" 
+            : "This will execute a real flash loan on the blockchain"
         });
         
         try {
-          const txHash = await executeFlashLoan(provider, mainnetConfig.lendingPoolAddress, params);
+          const txHash = await executeFlashLoan(provider, networkConfig.lendingPoolAddress, params);
           
           toast.success("Transaction submitted", {
             description: "Your arbitrage transaction has been submitted to the blockchain",
@@ -248,19 +319,19 @@ const ArbitrageExecutor: React.FC<ArbitrageExecutorProps> = ({
       <Button
         variant="default"
         size="sm"
-        className="h-8 px-3 text-xs bg-green-600 hover:bg-green-700"
+        className={`h-8 px-3 text-xs ${autoExecute ? 'bg-amber-600 hover:bg-amber-700' : 'bg-green-600 hover:bg-green-700'}`}
         onClick={executeTrade}
         disabled={isExecuting || (profitDetails && !profitDetails.isProtifable) || !address}
       >
         {isExecuting ? (
           <>
             <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
-            Executing
+            {autoExecute ? "Auto" : "Executing"}
           </>
         ) : (
           <>
             <Play className="h-3.5 w-3.5 mr-1" />
-            Execute
+            {autoExecute ? "Auto" : "Execute"}
           </>
         )}
       </Button>
